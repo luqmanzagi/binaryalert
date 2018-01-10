@@ -37,9 +37,27 @@ lambda_log_retention_days = 60
 
 
 /* ********** Advanced Configuration ********** */
-// These settings define the constraints and scale of BinaryAlert components.
-// They shouldn't need adjusting unless BinaryAlert needs to scale up (i.e. is hitting resource
-// limits). For reference, here is a simple architectural schematic:
+// Tags make it easier to organize resources, view grouped billing information, etc.
+// All supported resources (CloudWatch logs, Dyanmo, KMS, Lambda, S3, SQS) are tagged with
+// Name = [YOUR_VALUE_BELOW]
+tagged_name = "BinaryAlert"
+
+
+// ##### Alarms #####
+// Alarm if no binaries are analyzed for this amount of time.
+expected_analysis_frequency_minutes = 30
+
+
+// ##### Dynamo #####
+// Provisioned read/write capacity for the Dynamo table which stores match results.
+// Capacity is (very roughly) maximum number of operations per second. See Dynamo documentation.
+// Since there will likely be very few matches, these numbers can be quite low.
+dynamo_read_capacity = 10
+dynamo_write_capacity = 5
+
+
+// ##### Lambda #####
+// For reference, here is a simple architectural schematic:
 //
 //     S3 Events                               Analyzer Lambda
 //               \                           /
@@ -47,13 +65,9 @@ lambda_log_retention_days = 60
 //               /                           \
 //  Batch Lambda                               Analyzer Lambda
 
-// WARNING: If force destroy is enabled, all objects in the S3 bucket(s) will be deleted during
-// `terraform destroy`
-force_destroy = false
-
-// How long messages should be retained in SQS before being dropped.
-// Messages will continue to be dispatched to analyzers until they timeout.
-sqs_retention_minutes = 60
+// Memory and time limits for the analyzer functions.
+lambda_analyze_memory_mb = 1024
+lambda_analyze_timeout_sec = 300
 
 // Number of S3 object keys to pack into a single SQS message.
 // Each downstream analyzer will process at most 10 SQS messages, each with this many objects.
@@ -76,24 +90,19 @@ lambda_dispatch_limit = 500
 lambda_dispatch_memory_mb = 128
 lambda_dispatch_timeout_sec = 115
 
-// Memory and time limits for the analyzer functions.
-lambda_analyze_memory_mb = 1024
-lambda_analyze_timeout_sec = 300
-
 // Memory and time limits for the downloader function.
 lambda_download_memory_mb = 128
 lambda_download_timeout_sec = 300
 
-// Alarm if no binaries are analyzed for this amount of time.
-expected_analysis_frequency_minutes = 30
 
-// Provisioned capacity for the Dynamo table which stores match results.
-// Capacity is (very roughly) maximum number of operations per second. See Dynamo documentation.
-// Since there will likely be very few matches, these numbers can be quite low.
-dynamo_read_capacity = 10
-dynamo_write_capacity = 5
+// ##### S3 #####
+// WARNING: If force destroy is enabled, all objects in the S3 bucket(s) will be deleted during
+// `terraform destroy`
+force_destroy = false
 
-// Tags make it easier to organize resources, view grouped billing information, etc.
-// All supported resources (CloudWatch logs, Dyanmo, KMS, Lambda, S3, SQS) are tagged with
-// Name = [YOUR_VALUE_BELOW]
-tagged_name = "BinaryAlert"
+
+// ##### SQS #####
+// If an SQS message is not deleted (successfully processed) after the max number of receive
+// attempts, the message is delivered to an SQS dead-letter queue.
+download_queue_max_receives = 10
+analysis_queue_max_receives = 3
