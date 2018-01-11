@@ -3,9 +3,8 @@ resource "aws_sqs_queue" "downloader_queue" {
   count = "${var.enable_carbon_black_downloader}"
   name  = "${var.name_prefix}_binaryalert_downloader_queue"
 
-  // When a message is received, it will be hidden from the queue for this long.
-  // Set to just a few seconds after the downloader would timeout.
-  visibility_timeout_seconds = "${format("%d", var.lambda_download_timeout_sec + 2)}"
+  // When a message is received, it will be invisible to other consumers for this long.
+  visibility_timeout_seconds = "${var.download_queue_visibility_timeout_seconds}"
 
   redrive_policy = "{\"deadLetterTargetArn\":\"${aws_sqs_queue.sqs_dlq.arn}\",\"maxReceiveCount\":${var.download_queue_max_receives}}"
 
@@ -18,7 +17,7 @@ resource "aws_sqs_queue" "downloader_queue" {
 resource "aws_sqs_queue" "s3_object_queue" {
   name = "${var.name_prefix}_binaryalert_s3_object_queue"
 
-  // When a message is received, it will be hidden from the queue for this long.
+  // When a message is received, it will be invisible to other consumers for this long.
   // Set to just a few seconds after the lambda analyzer would timeout.
   visibility_timeout_seconds = "${format("%d", var.lambda_analyze_timeout_sec + 2)}"
 

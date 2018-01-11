@@ -13,6 +13,7 @@ module "binaryalert_downloader" {
 
   environment_variables = {
     CARBON_BLACK_URL                 = "${var.carbon_black_url}"
+    DOWNLOAD_SQS_QUEUE_URL           = "${aws_sqs_queue.downloader_queue.id}"
     ENCRYPTED_CARBON_BLACK_API_TOKEN = "${var.encrypted_carbon_black_api_token}"
     TARGET_S3_BUCKET                 = "${aws_s3_bucket.binaryalert_binaries.id}"
   }
@@ -30,6 +31,16 @@ EOF
   alarm_errors_threshold     = 500
   alarm_errors_interval_secs = 300
   alarm_sns_arns             = ["${aws_sns_topic.metric_alarms.arn}"]
+}
+
+// Allow downloader to be invoked via a CloudWatch rule.
+resource "aws_lambda_permission" "allow_cloudwatch_to_invoke_download" {
+  statement_id  = "AllowExecutionFromCloudWatch_${module.binaryalert_downloader.function_name}"
+  action        = "lambda:InvokeFunction"
+  function_name = "${module.binaryalert_downloader.function_name}"
+  principal     = "events.amazonaws.com"
+  source_arn    = "${aws_cloudwatch_event_rule.download_cronjob.arn}"
+  qualifier     = "${module.binaryalert_downloader.alias_name}"
 }
 
 // Create the batch Lambda function.

@@ -37,6 +37,18 @@ data "aws_iam_policy_document" "binaryalert_downloader_policy" {
     actions   = ["s3:PutObject"]
     resources = ["${aws_s3_bucket.binaryalert_binaries.arn}/*"]
   }
+
+  statement {
+    sid    = "ReceiveAndDeleteFromDownloadQueue"
+    effect = "Allow"
+
+    actions = [
+      "sqs:DeleteMessage",
+      "sqs:ReceiveMessage",
+    ]
+
+    resources = ["${aws_sqs_queue.downloader_queue.arn}"]
+  }
 }
 
 resource "aws_iam_role_policy" "binaryalert_downloader_policy" {

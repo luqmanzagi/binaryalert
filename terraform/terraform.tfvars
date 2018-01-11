@@ -59,6 +59,12 @@ dynamo_write_capacity = 5
 // ##### Lambda #####
 // For reference, here is a simple architectural schematic:
 //
+//     Downloader (optional)
+//     vv
+//     SQS
+//     vv
+//     S3
+//     vv
 //     S3 Events                               Analyzer Lambda
 //               \                           /
 //                SQS <<< Dispatch Lambda >>>  Analyzer Lambda
@@ -90,6 +96,9 @@ lambda_dispatch_limit = 500
 lambda_dispatch_memory_mb = 128
 lambda_dispatch_timeout_sec = 115
 
+// How often the CarbonBlack downloader will be invoked (to check the download queue).
+lambda_download_frequency_minutes = 1
+
 // Memory and time limits for the downloader function.
 lambda_download_memory_mb = 128
 lambda_download_timeout_sec = 300
@@ -102,7 +111,10 @@ force_destroy = false
 
 
 // ##### SQS #####
+// If an SQS message is received but not deleted, it will become visible again after this delay.
+download_queue_visibility_timeout_seconds = 60
+
 // If an SQS message is not deleted (successfully processed) after the max number of receive
-// attempts, the message is delivered to an SQS dead-letter queue.
-download_queue_max_receives = 10
+// attempts, the message is delivered to the SQS dead-letter queue.
+download_queue_max_receives = 5
 analysis_queue_max_receives = 3
