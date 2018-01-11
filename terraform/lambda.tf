@@ -33,16 +33,6 @@ EOF
   alarm_sns_arns             = ["${aws_sns_topic.metric_alarms.arn}"]
 }
 
-// Allow downloader to be invoked via a CloudWatch rule.
-resource "aws_lambda_permission" "allow_cloudwatch_to_invoke_download" {
-  statement_id  = "AllowExecutionFromCloudWatch_${module.binaryalert_downloader.function_name}"
-  action        = "lambda:InvokeFunction"
-  function_name = "${module.binaryalert_downloader.function_name}"
-  principal     = "events.amazonaws.com"
-  source_arn    = "${aws_cloudwatch_event_rule.download_cronjob.arn}"
-  qualifier     = "${module.binaryalert_downloader.alias_name}"
-}
-
 // Create the batch Lambda function.
 module "binaryalert_batcher" {
   source          = "modules/lambda"
@@ -59,7 +49,7 @@ module "binaryalert_batcher" {
     BATCH_LAMBDA_QUALIFIER = "Production"
     OBJECTS_PER_MESSAGE    = "${var.lambda_batch_objects_per_message}"
     S3_BUCKET_NAME         = "${aws_s3_bucket.binaryalert_binaries.id}"
-    SQS_QUEUE_URL          = "${aws_sqs_queue.s3_object_queue.id}"
+    SQS_QUEUE_URL          = "${aws_sqs_queue.analyzer_queue.id}"
   }
 
   log_retention_days = "${var.lambda_log_retention_days}"
@@ -79,10 +69,9 @@ module "binaryalert_dispatcher" {
   filename        = "lambda_dispatcher.zip"
 
   environment_variables = {
-    ANALYZE_LAMBDA_NAME      = "${module.binaryalert_analyzer.function_name}"
-    ANALYZE_LAMBDA_QUALIFIER = "${module.binaryalert_analyzer.alias_name}"
-    MAX_DISPATCHES           = "${var.lambda_dispatch_limit}"
-    SQS_QUEUE_URL            = "${aws_sqs_queue.s3_object_queue.id}"
+    SQS_QUEUE_URLS  = "${aws_sqs_queue.downloader_queue.id},${aws_sqs_queue.analyzer_queue.id}"
+    LAMBDA_TARGETS  = "${module.binaryalert_downloader.function_name}:${module.binaryalert_downloader.alias_name},${module.binaryalert_analyzer.function_name}:${module.binaryalert_analyzer.alias_name}"
+    MAX_INVOCATIONS = "${var.downloader_dispatch_limit},${var.analyzer_dispatch_limit}"
   }
 
   log_retention_days = "${var.lambda_log_retention_days}"
@@ -112,7 +101,7 @@ module "binaryalert_analyzer" {
   filename        = "lambda_analyzer.zip"
 
   environment_variables = {
-    SQS_QUEUE_URL                  = "${aws_sqs_queue.s3_object_queue.id}"
+    SQS_QUEUE_URL                  = "${aws_sqs_queue.analyzer_queue.id}"
     YARA_MATCHES_DYNAMO_TABLE_NAME = "${aws_dynamodb_table.binaryalert_yara_matches.name}"
     YARA_ALERTS_SNS_TOPIC_ARN      = "${aws_sns_topic.yara_match_alerts.arn}"
   }

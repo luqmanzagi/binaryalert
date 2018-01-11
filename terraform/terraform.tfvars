@@ -59,14 +59,14 @@ dynamo_write_capacity = 5
 // ##### Lambda #####
 // For reference, here is a simple architectural schematic:
 //
-//     Downloader (optional)
-//     vv
-//     SQS
-//     vv
-//     S3
-//     vv
-//     S3 Events                               Analyzer Lambda
-//               \                           /
+//     Download SQS   <<<<< --|
+//                            |
+// Downloader Lambda  <<<<< --|
+//        vv                  |
+//        S3                  |
+//        vv                  |
+//      S3 Events             |                Analyzer Lambda
+//               \            |              /
 //                SQS <<< Dispatch Lambda >>>  Analyzer Lambda
 //               /                           \
 //  Batch Lambda                               Analyzer Lambda
@@ -87,33 +87,28 @@ lambda_batch_memory_mb = 128
 // To ensure only one dispatcher is running, this rate should be > the lambda dispatch timeout.
 lambda_dispatch_frequency_minutes = 2
 
-// Maximum number of analyzers that can be asynchronously invoked during one dispatcher run.
-// Higher values allow for more throughput, but if too many analyzers are invoked too quickly,
+// Maximum number of analyzers/downloaders that can be asynchronously invoked during one dispatcher.
+// Higher values allow for more throughput, but if too many functions are invoked too quickly,
 // Lambda invocations may be throttled.
-lambda_dispatch_limit = 500
+analyzer_dispatch_limit = 500
+downloader_dispatch_limit = 150
 
 // Memory and time limits for the dispatching function.
 lambda_dispatch_memory_mb = 128
 lambda_dispatch_timeout_sec = 115
 
-// How often the CarbonBlack downloader will be invoked (to check the download queue).
-lambda_download_frequency_minutes = 1
-
 // Memory and time limits for the downloader function.
 lambda_download_memory_mb = 128
-lambda_download_timeout_sec = 300
+lambda_download_timeout_sec = 120
 
 
 // ##### S3 #####
 // WARNING: If force destroy is enabled, all objects in the S3 bucket(s) will be deleted during
 // `terraform destroy`
-force_destroy = false
+force_destroy = true
 
 
 // ##### SQS #####
-// If an SQS message is received but not deleted, it will become visible again after this delay.
-download_queue_visibility_timeout_seconds = 60
-
 // If an SQS message is not deleted (successfully processed) after the max number of receive
 // attempts, the message is delivered to the SQS dead-letter queue.
 download_queue_max_receives = 5

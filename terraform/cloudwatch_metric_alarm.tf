@@ -6,7 +6,7 @@ resource "aws_cloudwatch_metric_alarm" "batch_enqueue_errors" {
 
   alarm_description = <<EOF
 ${module.binaryalert_batcher.function_name} failed to enqueue one or more S3 keys into the SQS queue
-${aws_sqs_queue.s3_object_queue.arn}.
+${aws_sqs_queue.analyzer_queue.arn}.
   - Check the batcher CloudWatch logs.
   - SQS may be down.
   - Once the problem has been resolved, re-execute the batcher (`manage.py analyze_all`) to analyze
@@ -49,10 +49,10 @@ EOF
 
 // The SQS queue is falling behind.
 resource "aws_cloudwatch_metric_alarm" "sqs_age" {
-  alarm_name = "${aws_sqs_queue.s3_object_queue.name}_old_age"
+  alarm_name = "${aws_sqs_queue.analyzer_queue.name}_old_age"
 
   alarm_description = <<EOF
-The queue ${aws_sqs_queue.s3_object_queue.name} is falling behind and items are growing old.
+The queue ${aws_sqs_queue.analyzer_queue.name} is falling behind and items are growing old.
 This can sometimes happen during a batch analysis of the entire bucket (e.g. after a deploy).
   - If the SQS age is growing unbounded ("up and to the right"), either the analyzers are down or
     they are unable to pull from SQS. Check the analyzer logs.
@@ -65,7 +65,7 @@ EOF
   statistic   = "Minimum"
 
   dimensions = {
-    QueueName = "${aws_sqs_queue.s3_object_queue.name}"
+    QueueName = "${aws_sqs_queue.analyzer_queue.name}"
   }
 
   // The queue is consistently more than 30 minutes behind.

@@ -66,11 +66,11 @@ EOF
   "type": "metric",
   "width": 12,
   "properties": {
-    "title": "SQS: ${aws_sqs_queue.s3_object_queue.name}",
+    "title": "SQS: ${aws_sqs_queue.analyzer_queue.name}",
     "region": "${var.aws_region}",
     "stat": "Sum",
     "metrics": [
-      ["AWS/SQS", "NumberOfMessagesSent", "QueueName", "${aws_sqs_queue.s3_object_queue.name}"],
+      ["AWS/SQS", "NumberOfMessagesSent", "QueueName", "${aws_sqs_queue.analyzer_queue.name}"],
       [".", "NumberOfMessagesReceived", ".", "."],
       [".", "ApproximateNumberOfMessagesVisible", ".", ".", {"stat": "Average"}]
     ]
@@ -89,14 +89,14 @@ EOF
     "metrics": [
       [
         "AWS/SQS", "ApproximateAgeOfOldestMessage",
-        "QueueName", "${aws_sqs_queue.s3_object_queue.name}"
+        "QueueName", "${aws_sqs_queue.analyzer_queue.name}"
       ]
     ],
     "annotations": {
       "horizontal": [
         {
           "label": "Max",
-          "value": ${aws_sqs_queue.s3_object_queue.message_retention_seconds}
+          "value": ${aws_sqs_queue.analyzer_queue.message_retention_seconds}
         },
         {
           "label": "Alarm",

@@ -11,15 +11,3 @@ resource "aws_cloudwatch_event_target" "invoke_dispatch_lambda" {
   target_id = "${var.name_prefix}_binaryalert_dispatch_to_lambda"
   arn       = "${module.binaryalert_dispatcher.alias_arn}"
 }
-
-resource "aws_cloudwatch_event_rule" "download_cronjob" {
-  name                = "${var.name_prefix}_binaryalert_download_cronjob"
-  description         = "Regularly executes the BinaryAlert downloader Lambda function."
-  schedule_expression = "rate(${var.lambda_download_frequency_minutes} ${var.lambda_download_frequency_minutes == 1 ? "minute" : "minutes"})"
-}
-
-resource "aws_cloudwatch_event_target" "invoke_download_lambda" {
-  rule      = "${aws_cloudwatch_event_rule.download_cronjob.name}"
-  target_id = "${var.name_prefix}_binaryalert_download_to_lambda"
-  arn       = "${module.binaryalert_downloader.alias_arn}"
-}
