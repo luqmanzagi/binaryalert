@@ -11,14 +11,14 @@ import os
 import shutil
 import subprocess
 import tempfile
-from typing import Dict, List
+from typing import Dict, List, Union
 import zipfile
 
 import backoff
 import boto3
 from botocore.exceptions import BotoCoreError
 import cbapi
-from cbapi.errors import ObjectNotFoundError
+from cbapi.errors import ObjectNotFoundError, ServerError
 from cbapi.response.models import Binary
 
 LOGGER = logging.getLogger()
@@ -36,10 +36,6 @@ CARBON_BLACK = cbapi.CbEnterpriseResponseAPI(
 CLOUDWATCH = boto3.client('cloudwatch')
 S3_BUCKET = boto3.resource('s3').Bucket(os.environ['TARGET_S3_BUCKET'])
 SQS_QUEUE = boto3.resource('sqs').Queue(os.environ['DOWNLOAD_SQS_QUEUE_URL'])
-
-# SQS polling configuration
-SQS_MAX_MESSAGES = 5  # Max number of messages to receive.
-WAIT_TIME_SECONDS = 3  # Number of seconds to hold SQS connection open.
 
 
 def _download_from_carbon_black(binary: Binary) -> str:
@@ -105,8 +101,8 @@ def _process_md5(md5: str) -> bool:
         metadata = _build_metadata(binary)
         _upload_to_s3(binary.md5, download_path, metadata)
         return True
-    except (BotoCoreError, ObjectNotFoundError, zipfile.BadZipFile):
-        LOGGER.exception('Error downloading %s, record will remain in queue.', md5)
+    except (BotoCoreError, ObjectNotFoundError, ServerError, zipfile.BadZipFile):
+        LOGGER.exception('Error downloading %s', md5)
         return False
     finally:
         if download_path:
@@ -115,11 +111,7 @@ def _process_md5(md5: str) -> bool:
 
 
 def _delete_sqs_messages(receipts: List[str]) -> None:
-    """Mark a batch of SQS receipts as completed (removing them from the queue).
-
-    Args:
-        receipts: List of SQS receipt handles.
-    """
+    """Mark a batch of SQS receipts as completed (removing them from the queue)."""
     if not receipts:
         return
     LOGGER.info('Deleting %d SQS receipt(s)', len(receipts))
@@ -129,61 +121,60 @@ def _delete_sqs_messages(receipts: List[str]) -> None:
     )
 
 
-def download_lambda_handler(_, lambda_context) -> None:
+def _publish_metrics(receive_counts: List[int]) -> None:
+    """Send a statistic summary of receive counts."""
+    if not receive_counts:
+        return
+    LOGGER.info('Sending ReceiveCount metrics')
+    CLOUDWATCH.put_metric_data(
+        Namespace='BinaryAlert', MetricData=[{
+            'MetricName': 'DownloadQueueReceiveCount',
+            'StatisticValues': {
+                'Minimum': min(receive_counts),
+                'Maximum': max(receive_counts),
+                'SampleCount': len(receive_counts),
+                'Sum': sum(receive_counts)
+            },
+            'Unit': 'Count'
+        }]
+    )
+
+
+def download_lambda_handler(event: List[Dict[str, Union[str, int]]], _) -> None:
     """Lambda function entry point - copy a binary from CarbonBlack into the BinaryAlert S3 bucket.
 
     Args:
-        _: Unused invocation event
-        lambda_context: Lambda context object with .get_remaining_time_in_millis().
+        event: List of invocation events: [
+            {
+                'body': string JSON encoding "{'md5':'value'}",
+                'receipt': string SQS receipt,
+                'receive_count': int number of times this message has been received
+            }
+        ]
+        _: Unused Lambda context
     """
-    # Maximum amount of time needed in the execution loop.
-    # Allows us to break early instead of timing out.
-    loop_execution_time_ms = (WAIT_TIME_SECONDS + 60) * 1000
+    LOGGER.info('Invoked with %d records', len(event))
 
-    # Keep polling from SQS until we run out of time or until there are no messages.
-    receive_counts = []  # Number of times message was received before processed successfully.
-    while lambda_context.get_remaining_time_in_millis() > loop_execution_time_ms:
-        # Long-polling: Wait up to 3 seconds and receive up to 5 messages.
-        sqs_messages = SQS_QUEUE.receive_messages(
-            AttributeNames=['ApproximateReceiveCount'],
-            MaxNumberOfMessages=SQS_MAX_MESSAGES,
-            WaitTimeSeconds=WAIT_TIME_SECONDS
-        )
+    receipts_to_delete = []  # SQS receipts which can be deleted
+    receive_counts = []  # A list of message receive counts
 
-        if not sqs_messages:
-            LOGGER.info('No SQS messages available: exiting')
-            return
+    for record in event:
+        # Parse and validate record.
+        sqs_receipt = None
+        try:
+            md5 = json.loads(record['body'])['md5']
+            sqs_receipt = record['receipt']
+            receive_count = record['receive_count']
+        except (json.JSONDecodeError, KeyError):
+            LOGGER.exception('Unrecognized record format %s', record)
+            if sqs_receipt:
+                receipts_to_delete.append(sqs_receipt)
+            continue
 
-        delete_receipts = []  # List of SQS receipts which can be deleted
-        for msg in sqs_messages:
-            try:
-                md5 = json.loads(msg.body)['md5']
-            except (json.JSONDecodeError, KeyError):
-                LOGGER.exception('Unrecognized message body %s', msg.body)
-                delete_receipts.append(msg.receipt_handle)
-                continue
+        if _process_md5(md5):
+            # File was copied successfully and the receipt can be deleted.
+            receipts_to_delete.append(sqs_receipt)
+            receive_counts.append(receive_count)
 
-            if _process_md5(md5):
-                # File was copied successfully - the receipt can be deleted.
-                # An MD5 which fails to download will simply remain on the queue and will become
-                # available after the visibility timeout window to be tried again.
-                delete_receipts.append(msg.receipt_handle)
-                receive_counts.append(int(msg.attributes['ApproximateReceiveCount']))
-
-        _delete_sqs_messages(delete_receipts)
-
-    # Publish metrics about how many times messages had to be received before successful processing.
-    if receive_counts:
-        LOGGER.info('Sending receive count metrics')
-        CLOUDWATCH.put_metric_data(
-            Namespace='BinaryAlert', MetricData=[{
-                'MetricName': 'DownloadQueueReceiveCount',
-                'StatisticValues': {
-                    'Minimum': min(receive_counts),
-                    'Maximum': max(receive_counts),
-                    'SampleCount': len(receive_counts),
-                    'Sum': sum(receive_counts)
-                },
-                'Unit': 'Count'
-            }]
-        )
+    _delete_sqs_messages(receipts_to_delete)
+    _publish_metrics(receive_counts)

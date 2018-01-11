@@ -1,34 +1,33 @@
-// Create the CarbonBlack downloading Lambda function.
-module "binaryalert_downloader" {
-  enabled = "${var.enable_carbon_black_downloader}"
-
+// Create the analyzer Lambda function.
+module "binaryalert_analyzer" {
   source          = "modules/lambda"
-  function_name   = "${var.name_prefix}_binaryalert_downloader"
-  description     = "Copies binaries from CarbonBlack into the BinaryAlert S3 bucket"
+  function_name   = "${var.name_prefix}_binaryalert_analyzer"
+  description     = "Analyze a binary with a set of YARA rules"
   base_policy_arn = "${aws_iam_policy.base_policy.arn}"
-  handler         = "main.download_lambda_handler"
-  memory_size_mb  = "${var.lambda_download_memory_mb}"
-  timeout_sec     = "${var.lambda_download_timeout_sec}"
-  filename        = "lambda_downloader.zip"
+  handler         = "main.analyze_lambda_handler"
+  memory_size_mb  = "${var.lambda_analyze_memory_mb}"
+  timeout_sec     = "${var.lambda_analyze_timeout_sec}"
+  filename        = "lambda_analyzer.zip"
 
   environment_variables = {
-    CARBON_BLACK_URL                 = "${var.carbon_black_url}"
-    DOWNLOAD_SQS_QUEUE_URL           = "${aws_sqs_queue.downloader_queue.id}"
-    ENCRYPTED_CARBON_BLACK_API_TOKEN = "${var.encrypted_carbon_black_api_token}"
-    TARGET_S3_BUCKET                 = "${aws_s3_bucket.binaryalert_binaries.id}"
+    SQS_QUEUE_URL                  = "${aws_sqs_queue.analyzer_queue.id}"
+    YARA_MATCHES_DYNAMO_TABLE_NAME = "${aws_dynamodb_table.binaryalert_yara_matches.name}"
+    YARA_ALERTS_SNS_TOPIC_ARN      = "${aws_sns_topic.yara_match_alerts.arn}"
   }
 
   log_retention_days = "${var.lambda_log_retention_days}"
   tagged_name        = "${var.tagged_name}"
 
+  // During batch operations, the analyzer will have a high error rate because of S3 latency.
   alarm_errors_help = <<EOF
-The downloader often times out while waiting for CarbonBlack to process the binary.
-  - If there are a large number of binaries being analyzed right now, this alarm should resolve
-    itself once the spike subsides.
-  - If this error persists, start troubleshooting the downloader logs.
+If (a) the number of errors is not growing unbounded,
+(b) the errors are correlated with a rise in S3 download latency, and
+(c) the batcher is currently running (e.g. after a deploy),
+then you can resolve this alert (and consider increasing the threshold for this alarm).
+Otherwise, there is an unknown problem with the analyzers (which may still be related to S3).
 EOF
 
-  alarm_errors_threshold     = 500
+  alarm_errors_threshold     = 50
   alarm_errors_interval_secs = 300
   alarm_sns_arns             = ["${aws_sns_topic.metric_alarms.arn}"]
 }
@@ -89,36 +88,37 @@ resource "aws_lambda_permission" "allow_cloudwatch_to_invoke_dispatch" {
   qualifier     = "${module.binaryalert_dispatcher.alias_name}"
 }
 
-// Create the analyzer Lambda function.
-module "binaryalert_analyzer" {
+// Create the CarbonBlack downloading Lambda function.
+module "binaryalert_downloader" {
+  enabled = "${var.enable_carbon_black_downloader}"
+
   source          = "modules/lambda"
-  function_name   = "${var.name_prefix}_binaryalert_analyzer"
-  description     = "Analyze a binary with a set of YARA rules"
+  function_name   = "${var.name_prefix}_binaryalert_downloader"
+  description     = "Copies binaries from CarbonBlack into the BinaryAlert S3 bucket"
   base_policy_arn = "${aws_iam_policy.base_policy.arn}"
-  handler         = "main.analyze_lambda_handler"
-  memory_size_mb  = "${var.lambda_analyze_memory_mb}"
-  timeout_sec     = "${var.lambda_analyze_timeout_sec}"
-  filename        = "lambda_analyzer.zip"
+  handler         = "main.download_lambda_handler"
+  memory_size_mb  = "${var.lambda_download_memory_mb}"
+  timeout_sec     = "${var.lambda_download_timeout_sec}"
+  filename        = "lambda_downloader.zip"
 
   environment_variables = {
-    SQS_QUEUE_URL                  = "${aws_sqs_queue.analyzer_queue.id}"
-    YARA_MATCHES_DYNAMO_TABLE_NAME = "${aws_dynamodb_table.binaryalert_yara_matches.name}"
-    YARA_ALERTS_SNS_TOPIC_ARN      = "${aws_sns_topic.yara_match_alerts.arn}"
+    CARBON_BLACK_URL                 = "${var.carbon_black_url}"
+    DOWNLOAD_SQS_QUEUE_URL           = "${aws_sqs_queue.downloader_queue.id}"
+    ENCRYPTED_CARBON_BLACK_API_TOKEN = "${var.encrypted_carbon_black_api_token}"
+    TARGET_S3_BUCKET                 = "${aws_s3_bucket.binaryalert_binaries.id}"
   }
 
   log_retention_days = "${var.lambda_log_retention_days}"
   tagged_name        = "${var.tagged_name}"
 
-  // During batch operations, the analyzer will have a high error rate because of S3 latency.
   alarm_errors_help = <<EOF
-If (a) the number of errors is not growing unbounded,
-(b) the errors are correlated with a rise in S3 download latency, and
-(c) the batcher is currently running (e.g. after a deploy),
-then you can resolve this alert (and consider increasing the threshold for this alarm).
-Otherwise, there is an unknown problem with the analyzers (which may still be related to S3).
+The downloader often times out while waiting for CarbonBlack to process the binary.
+  - If there are a large number of binaries being analyzed right now, this alarm should resolve
+    itself once the spike subsides.
+  - If this error persists, start troubleshooting the downloader logs.
 EOF
 
-  alarm_errors_threshold     = 50
+  alarm_errors_threshold     = 500
   alarm_errors_interval_secs = 300
   alarm_sns_arns             = ["${aws_sns_topic.metric_alarms.arn}"]
 }
