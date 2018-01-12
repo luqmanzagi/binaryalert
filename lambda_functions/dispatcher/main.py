@@ -21,6 +21,7 @@ LAMBDA = boto3.client('lambda')
 DISPATCH_CONFIGS = [
     {
         'queue': boto3.resource('sqs').Queue(url),
+        'queue_url': url,
         'lambda_name':  target.split(':')[0],
         'lambda_qualifier': target.split(':')[1],
         'max_invocations': int(max_invoke),
@@ -53,6 +54,8 @@ def dispatch_lambda_handler(_, lambda_context):
 
     while lambda_context.get_remaining_time_in_millis() > loop_execution_time_ms:
         # Round-robin all queue configs, polling from each.
+        # TODO: Check if they are all at the dispatch limit
+        # TODO: Don't publish metrics if nothing happened
         for config in DISPATCH_CONFIGS:
             # If we've already reached our invocation limit for this queue, skip it.
             function_name = config['lambda_name']

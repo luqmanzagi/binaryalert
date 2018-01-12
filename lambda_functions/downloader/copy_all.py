@@ -11,6 +11,7 @@ from multiprocessing import JoinableQueue, Process, Queue  # type: ignore
 import os
 import queue
 
+import boto3
 import cbapi
 
 if __package__:
@@ -23,8 +24,10 @@ logging.basicConfig(format='%(asctime)s %(levelname)-6s %(message)s')
 LOGGER = logging.getLogger('carbon_black_copy')
 LOGGER.setLevel(logging.DEBUG)
 
-NUM_CONSUMERS = 32  # Number of consumer threads executing copy tasks (optimized by experiment).
+NUM_CONSUMERS = 1  # Number of consumer threads executing copy tasks (optimized by experiment).
 MAX_TASK_QUEUE_SIZE = NUM_CONSUMERS * 20  # Maximum number of tasks in the queue at any time.
+
+SQS_QUEUE = boto3.resource('sqs').Queue('https://sqs.us-east-1.amazonaws.com/121671312944/dispatch_test_binaryalert_downloader_queue')
 
 
 class CopyTask(object):
@@ -43,7 +46,8 @@ class CopyTask(object):
 
     def __call__(self):
         """Execute the copy task."""
-        main.download_lambda_handler({'md5': self.md5}, None)
+        SQS_QUEUE.send_message(MessageBody='{"md5":"%s"}' % self.md5)
+        # main.download_lambda_handler({'md5': self.md5}, None)
 
     def __str__(self) -> str:
         """Use the index and MD5 in the string representation."""

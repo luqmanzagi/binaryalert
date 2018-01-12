@@ -144,7 +144,7 @@ def download_lambda_handler(event: List[Dict[str, Union[str, int]]], _) -> None:
     """Lambda function entry point - copy a binary from CarbonBlack into the BinaryAlert S3 bucket.
 
     Args:
-        event: List of invocation events: [
+        event: List of 1-10 invocation events from dispatcher: [
             {
                 'body': string JSON encoding "{'md5':'value'}",
                 'receipt': string SQS receipt,
@@ -153,6 +153,9 @@ def download_lambda_handler(event: List[Dict[str, Union[str, int]]], _) -> None:
         ]
         _: Unused Lambda context
     """
+    # TODO: allow manual invocation
+    # TODO: metric filters (INFO vs ERROR logs, memory, etc)
+    # TODO: Allow low-throughput deploys by disabling SQS
     LOGGER.info('Invoked with %d records', len(event))
 
     receipts_to_delete = []  # SQS receipts which can be deleted
