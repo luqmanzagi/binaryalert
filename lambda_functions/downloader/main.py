@@ -5,13 +5,14 @@
 #   ENCRYPTED_CARBON_BLACK_API_TOKEN: API token, encrypted with KMS.
 #   TARGET_S3_BUCKET: Name of the S3 bucket in which to save the copied binary.
 import base64
+import collections
 import json
 import logging
 import os
 import shutil
 import subprocess
 import tempfile
-from typing import Dict, List, Union
+from typing import Any, Dict, List
 import zipfile
 
 import backoff
@@ -36,6 +37,39 @@ CARBON_BLACK = cbapi.CbEnterpriseResponseAPI(
 CLOUDWATCH = boto3.client('cloudwatch')
 S3_BUCKET = boto3.resource('s3').Bucket(os.environ['TARGET_S3_BUCKET'])
 SQS_QUEUE = boto3.resource('sqs').Queue(os.environ['DOWNLOAD_SQS_QUEUE_URL'])
+
+# The download invocation event is parsed into a tuple with MD5 and a Receipt
+DownloadRecord = collections.namedtuple('DownloadRecord', ['md5', 'sqs_receipt', 'receive_count'])
+
+
+def _validate_and_extract_md5s(event: Any) -> List[DownloadRecord]:
+    """Validate the invocation event and extract return a list of DownloadRecords."""
+    result = []
+
+    if isinstance(event, list):
+        LOGGER.info('Invoked from dispatcher with list of %d SQS records', len(event))
+        for sqs_record in event:
+            # Parse SQS record.
+            try:
+                md5 = json.loads(sqs_record['body'])['md5']
+                sqs_receipt = sqs_record['receipt']
+                receive_count = sqs_record['receive_count']
+                result.append(DownloadRecord(md5, sqs_receipt, receive_count))
+            except (json.JSONDecodeError, KeyError):
+                LOGGER.exception('Skipping invalid SQS record: %s', sqs_record)
+                continue
+
+    elif isinstance(event, dict):
+        LOGGER.info('Invoked with dictionary event')
+        try:
+            result.append(DownloadRecord(event['md5'], None, 0))
+        except KeyError:
+            LOGGER.exception('Invalid event: %s', event)
+
+    else:
+        LOGGER.exception('Unexpected event type: %s', event)
+
+    return result
 
 
 def _download_from_carbon_black(binary: Binary) -> str:
@@ -94,7 +128,7 @@ def _upload_to_s3(md5: str, local_file_path: str, metadata: Dict[str, str]) -> N
 
 def _process_md5(md5: str) -> bool:
     """Download the given file from CarbonBlack and upload to S3, returning True if successful."""
-    download_path = ''
+    download_path = None
     try:
         binary = CARBON_BLACK.select(Binary, md5)
         download_path = _download_from_carbon_black(binary)
@@ -140,7 +174,7 @@ def _publish_metrics(receive_counts: List[int]) -> None:
     )
 
 
-def download_lambda_handler(event: List[Dict[str, Union[str, int]]], _) -> None:
+def download_lambda_handler(event: Any, _) -> None:
     """Lambda function entry point - copy a binary from CarbonBlack into the BinaryAlert S3 bucket.
 
     Args:
@@ -151,33 +185,22 @@ def download_lambda_handler(event: List[Dict[str, Union[str, int]]], _) -> None:
                 'receive_count': int number of times this message has been received
             }
         ]
+
         _: Unused Lambda context
     """
-    # TODO: allow manual invocation
-    # TODO: metric filters (INFO vs ERROR logs, memory, etc)
-    # TODO: Allow low-throughput deploys by disabling SQS
-    LOGGER.info('Invoked with %d records', len(event))
+    records: List[DownloadRecord] = _validate_and_extract_md5s(event)
+    if not records:
+        LOGGER.warning('No MD5 records found')
+        return
 
-    receipts_to_delete = []  # SQS receipts which can be deleted
-    receive_counts = []  # A list of message receive counts
+    receipts_to_delete = []  # SQS receipts which can be deleted.
+    receive_counts = []  # A list of message receive counts.
 
-    for record in event:
-        # Parse and validate record.
-        sqs_receipt = None
-        try:
-            md5 = json.loads(record['body'])['md5']
-            sqs_receipt = record['receipt']
-            receive_count = record['receive_count']
-        except (json.JSONDecodeError, KeyError):
-            LOGGER.exception('Unrecognized record format %s', record)
-            if sqs_receipt:
-                receipts_to_delete.append(sqs_receipt)
-            continue
-
-        if _process_md5(md5):
+    for record in records:
+        if _process_md5(record.md5) and record.sqs_receipt:
             # File was copied successfully and the receipt can be deleted.
-            receipts_to_delete.append(sqs_receipt)
-            receive_counts.append(receive_count)
+            receipts_to_delete.append(record.sqs_receipt)
+            receive_counts.append(record.receive_count)
 
     _delete_sqs_messages(receipts_to_delete)
     _publish_metrics(receive_counts)
