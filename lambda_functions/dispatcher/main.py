@@ -22,14 +22,13 @@ LAMBDA = boto3.client('lambda')
 
 # Build a DispatchConfig tuple for each queue specified in the environment variables.
 DispatchConfig = collections.namedtuple(
-    'DispatchConfig', ['queue', 'queue_url', 'lambda_name', 'lambda_qualifier', 'max_invocations'])
+    'DispatchConfig', ['queue', 'lambda_name', 'lambda_qualifier', 'max_invocations'])
 DISPATCH_CONFIGS = [
     DispatchConfig(
         queue=boto3.resource('sqs').Queue(url),
-        queue_url=url,
         lambda_name=target.split(':')[0],
         lambda_qualifier=target.split(':')[1],
-        max_invocations=max_invoke
+        max_invocations=int(max_invoke)
     )
     for (url, target, max_invoke) in zip(
         os.environ['SQS_QUEUE_URLS'].split(','),
@@ -40,6 +39,29 @@ DISPATCH_CONFIGS = [
 
 SQS_MAX_MESSAGES = 10  # Maximum number of messages to request (highest allowed by SQS).
 WAIT_TIME_SECONDS = 3  # Maximum amount of time to hold a receive_message connection open.
+
+
+def _send_messages(sqs_messages: List[Any], config: DispatchConfig) -> None:
+    """Invoke the target Lambda with a batch of SQS messages."""
+    # Build the JSON payload.
+    records = [
+        {
+            'body': msg.body,
+            'receipt': msg.receipt_handle,
+            'receive_count': int(msg.attributes['ApproximateReceiveCount']),
+        }
+        for msg in sqs_messages
+    ]
+
+    # Invoke the target Lambda.
+    LOGGER.info('Sending %d messages to %s:%s',
+                len(records), config.lambda_name, config.lambda_qualifier)
+    LAMBDA.invoke(
+        FunctionName=config.lambda_name,
+        InvocationType='Event',  # Asynchronous invocation
+        Payload=json.dumps(records),
+        Qualifier=config.lambda_qualifier
+    )
 
 
 def _publish_metrics(batch_sizes: Dict[str, List[int]]) -> None:
@@ -73,29 +95,8 @@ def _publish_metrics(batch_sizes: Dict[str, List[int]]) -> None:
     if metric_data:
         LOGGER.info('Publishing invocation metrics')
         CLOUDWATCH.put_metric_data(Namespace='BinaryAlert', MetricData=metric_data)
-
-
-def _send_messages(sqs_messages: List[Any], config: DispatchConfig) -> None:
-    """Invoke the target Lambda with a batch of SQS messages."""
-    # Build the JSON payload.
-    records = [
-        {
-            'body': msg.body,
-            'receipt': msg.receipt_handle,
-            'receive_count': int(msg.attributes['ApproximateReceiveCount']),
-        }
-        for msg in sqs_messages
-    ]
-
-    # Invoke the target Lambda.
-    LOGGER.info('Sending %d messages to %s:%s',
-                len(records), config.lambda_name, config.lambda_qualifier)
-    LAMBDA.invoke(
-        FunctionName=config.lambda_name,
-        InvocationType='Event',  # Asynchronous invocation
-        Payload=json.dumps(records),
-        Qualifier=config.lambda_qualifier
-    )
+    else:
+        LOGGER.info('No messages dispatched')
 
 
 def dispatch_lambda_handler(_, lambda_context):
