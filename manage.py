@@ -347,7 +347,7 @@ class Manager(object):
 
         # Validate the configuration.
         try:
-            if command not in {'compile_rules', 'configure', 'unit_test'}:
+            if command not in {'clone_rules', 'compile_rules', 'configure', 'unit_test'}:
                 self._config.validate()
             getattr(self, command)()  # Command validation already happened in the ArgumentParser.
         except InvalidConfigError as error:
@@ -368,14 +368,13 @@ class Manager(object):
 
     @staticmethod
     def apply() -> None:
-        """Terraform validate and apply any configuration/package changes."""
-        # Validate and format the terraform files.
+        """Terraform apply any configuration/package changes."""
         os.chdir(TERRAFORM_DIR)
 
         # Setup the backend if needed and reload modules.
         subprocess.check_call(['terraform', 'init'])
 
-        subprocess.check_call(['terraform', 'validate'])
+        # Standardize formatting Terraform files.
         subprocess.check_call(['terraform', 'fmt'])
 
         # Apply changes (requires interactive approval)
@@ -401,6 +400,7 @@ class Manager(object):
         if not self._config.enable_carbon_black_downloader:
             raise InvalidConfigError('CarbonBlack downloader is not enabled.')
         os.environ['CARBON_BLACK_URL'] = self._config.carbon_black_url
+        os.environ['DOWNLOAD_SQS_QUEUE_URL'] = ''  # SQS URL not needed for copy_all
         os.environ['ENCRYPTED_CARBON_BLACK_API_TOKEN'] = (
             self._config.encrypted_carbon_black_api_token
         )
