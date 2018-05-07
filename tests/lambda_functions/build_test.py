@@ -6,15 +6,13 @@ import unittest
 from unittest import mock
 import zipfile
 
-import pip
-
 from lambda_functions import build
 
 
 def _mock_pip_main(args_list: List[str]) -> None:
     """Mock pip install just creates the target directory."""
     directory = args_list[-2]
-    package = args_list[-1]
+    package = args_list[-1].split('==')[0]
     os.makedirs(os.path.join(directory, package))
 
 
@@ -32,7 +30,7 @@ class BuildTest(unittest.TestCase):
                           subset: bool = False):
         """Verify the set of filenames in the zip archive matches the expected list."""
         with zipfile.ZipFile(archive_path, 'r') as archive:
-            filenames = set(zip_info.filename for zip_info in archive.filelist)  # type: ignore
+            filenames = set(zip_info.filename for zip_info in archive.filelist)
         if subset:
             self.assertTrue(expected_filenames.issubset(filenames))
         else:
@@ -65,13 +63,28 @@ class BuildTest(unittest.TestCase):
                 'libs/bzl.o',
                 'libs/pdf_parser.o',
                 'libs/zl.o',
+                'libfontconfig.so.1',
+                'libfreetype.so.6',
+                'libjbig.so.2.0',
+                'libjpeg.so.62',
+                'liblcms2.so.2',
+                'liblzma.so.5',
                 'liblzo2.so.2',
+                'libopenjpeg.so.2',
+                'libpcrecpp.so.0',
+                'libpoppler.so.46',
+                'libpng12.so.0',
                 'libstdc++.so.6',
+                'libtiff.so.5',
                 'libyara.so.3',
+                'libxml2.so.2',
+                'pdftotext',
+                'upx',
                 'yara.so',
                 'yextend',
 
                 # Licenses
+                'UPX_LICENSE',
                 'YARA_LICENSE',
                 'YARA_PYTHON_LICENSE',
                 'YEXTEND_LICENSE'
@@ -95,13 +108,13 @@ class BuildTest(unittest.TestCase):
         )
         mock_print.assert_called_once()
 
-    @mock.patch.object(pip, 'main', side_effect=_mock_pip_main)
+    @mock.patch.object(build.subprocess, 'check_call', side_effect=_mock_pip_main)
     def test_build_downloader(self, mock_pip: mock.MagicMock, mock_print: mock.MagicMock):
         """Verify list of bundled files for the downloader."""
         build._build_downloader(self._tempdir)
         self._verify_filenames(
             os.path.join(self._tempdir, build.DOWNLOAD_ZIPFILE + '.zip'),
-            {'backoff/', 'cbapi/', 'main.py'},
+            {'cbapi/', 'main.py'},
             subset=True
         )
         mock_pip.assert_called_once()

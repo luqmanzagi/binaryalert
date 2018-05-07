@@ -4,10 +4,10 @@ import os
 import pathlib
 import shutil
 import stat
+import subprocess
+import sys
 import tempfile
 import zipfile
-
-import pip
 
 from lambda_functions.analyzer.common import COMPILED_RULES_FILENAME
 from rules.compile_rules import compile_rules
@@ -15,7 +15,7 @@ from rules.compile_rules import compile_rules
 LAMBDA_DIR = os.path.dirname(os.path.realpath(__file__))
 
 ANALYZE_SOURCE = os.path.join(LAMBDA_DIR, 'analyzer')
-ANALYZE_DEPENDENCIES = os.path.join(ANALYZE_SOURCE, 'yara3.7.0_yextend1.6.zip')
+ANALYZE_DEPENDENCIES = os.path.join(ANALYZE_SOURCE, 'dependencies.zip')
 ANALYZE_ZIPFILE = 'lambda_analyzer'
 
 BATCH_SOURCE = os.path.join(LAMBDA_DIR, 'batcher', 'main.py')
@@ -25,11 +25,10 @@ DISPATCH_SOURCE = os.path.join(LAMBDA_DIR, 'dispatcher', 'main.py')
 DISPATCH_ZIPFILE = 'lambda_dispatcher'
 
 DOWNLOAD_SOURCE = os.path.join(LAMBDA_DIR, 'downloader', 'main.py')
-DOWNLOAD_DEPENDENCIES = os.path.join(LAMBDA_DIR, 'downloader', 'cbapi_1.3.4.zip')
 DOWNLOAD_ZIPFILE = 'lambda_downloader'
 
 
-def _build_analyzer(target_directory):
+def _build_analyzer(target_directory: str) -> None:
     """Build the YARA analyzer Lambda deployment package."""
     print('Creating analyzer deploy package...')
     pathlib.Path(os.path.join(ANALYZE_SOURCE, 'main.py')).touch()
@@ -45,20 +44,21 @@ def _build_analyzer(target_directory):
     # Compile the YARA rules.
     compile_rules(os.path.join(temp_package_dir, COMPILED_RULES_FILENAME))
 
-    # Extract the AWS-native Python deps into the package.
+    # Extract the AWS-native dependencies into the package.
     with zipfile.ZipFile(ANALYZE_DEPENDENCIES, 'r') as deps:
         deps.extractall(temp_package_dir)
 
-    # Make yextend executable for everyone.
-    yextend = os.path.join(temp_package_dir, 'yextend')
-    os.chmod(yextend, os.stat(yextend).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    # Make UPX and yextend executable for everyone.
+    for executable in ['pdftotext', 'upx', 'yextend']:
+        path = os.path.join(temp_package_dir, executable)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     # Zip up the package and remove temporary directory.
     shutil.make_archive(os.path.join(target_directory, ANALYZE_ZIPFILE), 'zip', temp_package_dir)
     shutil.rmtree(temp_package_dir)
 
 
-def _build_batcher(target_directory):
+def _build_batcher(target_directory: str) -> None:
     """Build the batcher Lambda deployment package."""
     print('Creating batcher deploy package...')
     pathlib.Path(BATCH_SOURCE).touch()  # Change last modified time to force new Lambda deploy
@@ -66,7 +66,7 @@ def _build_batcher(target_directory):
         pkg.write(BATCH_SOURCE, os.path.basename(BATCH_SOURCE))
 
 
-def _build_dispatcher(target_directory):
+def _build_dispatcher(target_directory: str) -> None:
     """Build the dispatcher Lambda deployment package."""
     print('Creating dispatcher deploy package...')
     pathlib.Path(DISPATCH_SOURCE).touch()
@@ -74,7 +74,7 @@ def _build_dispatcher(target_directory):
         pkg.write(DISPATCH_SOURCE, os.path.basename(DISPATCH_SOURCE))
 
 
-def _build_downloader(target_directory):
+def _build_downloader(target_directory: str) -> None:
     """Build the downloader Lambda deployment package."""
     print('Creating downloader deploy package...')
     pathlib.Path(DOWNLOAD_SOURCE).touch()
@@ -83,12 +83,11 @@ def _build_downloader(target_directory):
     if os.path.exists(temp_package_dir):
         shutil.rmtree(temp_package_dir)
 
-    # Extract cbapi library.
-    with zipfile.ZipFile(DOWNLOAD_DEPENDENCIES, 'r') as deps:
-        deps.extractall(temp_package_dir)
-
-    # Pip install backoff library (has no native dependencies).
-    pip.main(['install', '--quiet', '--target', temp_package_dir, 'backoff'])
+    # Pip install cbapi library (has no native dependencies).
+    subprocess.check_call([
+        sys.executable, '-m', 'pip', 'install',
+        '--quiet', '--target', temp_package_dir, 'cbapi==1.3.6'
+    ])
 
     # Copy Lambda code into the package.
     shutil.copy(DOWNLOAD_SOURCE, temp_package_dir)
@@ -98,7 +97,7 @@ def _build_downloader(target_directory):
     shutil.rmtree(temp_package_dir)
 
 
-def build(target_directory, downloader=False):
+def build(target_directory: str, downloader: bool = False) -> None:
     """Build Lambda deployment packages.
 
     Args:
